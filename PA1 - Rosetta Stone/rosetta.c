@@ -15,22 +15,6 @@ struct Node {
     char node[MAX_LENGTH];  // Task or Requirement
 };
 
-/* Reads from Stdin two lines:
-    A task string and a requirement string*/
-int read(char *task, char *req) {
-    int i, c;
-    if ((c = getchar()) == EOF)
-        return 0;
-    task[0] = c;
-    for (i = 1; (c = getchar()) != '\n'; i++)
-        task[i] = c;
-    task[i] = '\0';
-    for (i = 0; (c = getchar()) != '\n'; i++)
-        req[i] = c;
-    req[i] = '\0';
-    return 1; 
-}
-
 /*  Adds a new node to nodes if the input string isn't already in nodes
     Returns the new length of nodes*/
 int add_node(struct Node *nodes, char *string, int length) {
@@ -84,7 +68,10 @@ int main() {
     struct Node *nodes = malloc(sizeof(struct Node) * nodes_length);
     struct Edge *edges = malloc(sizeof(struct Edge) * edges_length);
     char task[MAX_LENGTH], req[MAX_LENGTH];
-    while (read(task, req)) {
+    while (fgets(task, sizeof(task), stdin) != NULL) {
+        fgets(req, sizeof(req), stdin);
+        task[strcspn(task, "\n")] = '\0';
+        req[strcspn(req, "\n")] = '\0';
         i = add_node(nodes, task, i);
         if (i == nodes_length)
             nodes = realloc(nodes, sizeof(struct Node) * (nodes_length *= 2));
