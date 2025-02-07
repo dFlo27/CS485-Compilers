@@ -3,9 +3,9 @@ class Main {
 };
 
 class Foo {
-    method() : Object {1};
+    method() : Int {1};
 };
 
 class Pooh inherits Foo {
-    method(x : Int) : Object {2};
+    method(x : Int) : Int {2};
 };
