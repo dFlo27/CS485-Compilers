@@ -10,7 +10,7 @@ class Child inherits Parent {};
 class Boo {};
 class Foo {};
 
-class Main inherits IO {
+class Main inherits Main {
     x : Int <- 1;
     main() : Object{{
         x <- 1;

@@ -21,7 +21,7 @@ no_inherits
 Main
 inherits
 13
-IO
+Main
 2
 attribute_init
 14
