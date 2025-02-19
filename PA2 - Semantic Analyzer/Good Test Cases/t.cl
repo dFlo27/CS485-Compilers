@@ -7,11 +7,12 @@
 
 class Parent {};
 class Child inherits Parent {};
-class Boo {};
-class Foo {};
+class Boo inherits Child {};
+class Foo inherits Boo {};
 
-class Main inherits Main {
-    x : Int <- 1;
+class Main inherits IO {    
+    x : Int;
+    y : Int;
     main() : Object{{
         x <- 1;
         if 1 = x then 
@@ -23,3 +24,4 @@ class Main inherits Main {
 };
 
 class Fool inherits Parent {};
+class Ew {};
