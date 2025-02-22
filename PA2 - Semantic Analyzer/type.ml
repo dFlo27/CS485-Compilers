@@ -1,5 +1,12 @@
 open Printf
+
+(* All type check errors will raise one of these exceptions *)
+
+exception No_class_main
+exception No_method_main
 exception Cycle of string list
+exception Class_redefine of string list
+exception Class_unknown of string list
 exception Attribute_redefine of string list
 exception Attribute_failure of string list
 exception Method_formal_length
@@ -257,16 +264,8 @@ let rec new_class_list ic length =
 
 (* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
 
-let rec class_type_check lst og = 
-    match lst with
-    | [] -> ()
-    | cl::tail -> 
-        if List.exists (fun ele -> cl.name = ele.name) tail then 
-            let () = printf "ERROR: %s: Type-Check: class %s redefined\n" cl.location cl.name in exit 1
-        else if (List.hd cl.inherits) = "inherits" && List.mem (List.nth cl.inherits 1) ["IO"; "Object"] |> not && List.exists (fun ele -> ele.name = List.nth cl.inherits 1) og |> not then
-            let () = printf "ERROR: %s: Type-Check: class %s inherits from unknown class %s\n" (List.nth cl.inherits 2) cl.name (List.nth cl.inherits 1) in exit 1
-        else 
-            class_type_check tail og
+let class_type_check acc ele = 
+    if List.exists (String.equal ele) acc then raise (Class_Redefine, ele) else ele :: acc
 
 let init_method_hash m_env = 
     Hashtbl.add m_env "abort"     ["0"; "Object"];
@@ -313,27 +312,37 @@ let rec print_map oc ast =
         print_attribute oc cl.attributes;
         print_map oc tail;;
 
-(* 'Main' Method of the program. Calls all functions and returns either a stdout error or a .cl-ast file ---------------------------------------------------- *)
-let ic = open_in Sys.argv.(1) in                                                                       (* Opens input file. will crash if file does not exist *)      
-match input_line ic with                                                                               (* Handles the empty file case *)
-| "0"    -> printf "ERROR: 0: Type-Check: class Main not found\n"; exit 1                              (* If no class exists, cry no class Main *)
-| length -> let ast = new_class_list ic (length |> int_of_string) in
-    class_type_check ast ast;
-    try let path = create_edges ast |> topo_sort in
-    try let ast = process_features ic ast path (Hashtbl.create 50) (Hashtbl.create 50) "Object" in
+(* 'Main' Method of the program. Calls all functions and returns either an error or a .cl-ast file ---------------------------------------------------------- *)
+let main ic =
+    match input_line ic with                                                                               (* Handles the empty file case *)
+    | "0"    -> error No_Main                                                                              (* If no class exists, cry no class Main *)
+    | length -> let ast = new_class_list ic (length |> int_of_string) in                                   (* Else read classes superficially *)
+    LList.fold_left class_type_check ast
+    let path = create_edges ast |> topo_sort in
+    let ast = process_features ic ast path (Hashtbl.create 50) (Hashtbl.create 50) "Object" in
         let oc = String.concat "temp" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out in
             fprintf oc "class_map\n%i\n" (List.length ast);
             List.fast_sort (fun cl1 cl2 -> String.compare cl1.name cl2.name) (std_classes @ ast) |> print_map oc; 
-    with Attribute_failure lst ->
-        let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" (List.nth lst 2) (List.hd lst) (List.nth lst 1) in exit 1
-    with Cycle lst ->                                              (* Handles cycle error *)
-        printf "ERROR: 0: Type-Check: inheritance cycle: " ;                    
-        if List.length lst = 1 then                                             (* We want to print only class if cycle contains one element only *)
-            let () = printf "%s\n" (List.hd lst) in exit 1                      (* Prints only class name and not brackets: c1                    *)
-        else 
-            let () = printf "[" in let () = print_cycle lst in exit 1;           (* Prints cycle with brackets and commas: [c1, c2, c3, ..., cn]   *)
+        ;;
 
-(* Potentially, instead of saving every single line in types, we can just save the type of each attribute, method, and function.
+(* Error handler - Calls main method and handles all errors encountered ------------------------------------------------------------------------------------- *)
+
+let ic = open_in Sys.argv.(1) in (* Opens input file. will crash if file does not exist *)      
+    try main ic
+with No_class_main ->
+    let () = printf "ERROR: 0: Type-Check: class Main not found\n" in exit 1
+with No_method_main ->
+    let () = printf "ERROR: 0: Type-Check: class Main method main not found\n" in exit 1
+with Cycle lst ->                                                           (* Cycle error *)
+    printf "ERROR: 0: Type-Check: inheritance cycle: ";                    
+    if List.length lst = 1 then                                             (* We want to print only class if cycle contains one element only *)
+        let () = printf "%s\n" (List.hd lst) in exit 1                      (* Prints only class name and not brackets: c1                    *)
+    else 
+        let () = printf "[" in let () = print_cycle lst in exit 1;           (* Prints cycle with brackets and commas: [c1, c2, c3, ..., cn]   *)
+with Attribute_failure lst ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" (List.nth lst 2) (List.hd lst) (List.nth lst 1) in exit 1
+
+    (* Potentially, instead of saving every single line in types, we can just save the type of each attribute, method, and function.
    Then, we can just look them up when we print out the ast tree.
             
     1st Pass: Read classes and type check them. We DONT read attributes nor methods because of lack of info from environment and parents.
