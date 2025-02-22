@@ -5,15 +5,9 @@
 
 
 
-
-
-
+class Foo inherits Main {};
 
 class Main {
     x : Int;
     main() : Object {new Object};
-};
-
-class Foo inherits Main {
-    x : String;
 };
