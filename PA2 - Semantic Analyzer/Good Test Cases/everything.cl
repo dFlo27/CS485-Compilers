@@ -3,7 +3,7 @@ class Parent {
     test(x : Int, y : String) : Int {1 + 2 + 3};
 };
 class Child inherits Parent {
-    test(x : Int, y : String) : Int {2 + 3 + 4};
+    test (x : Int, y : String) : Int {2 + 3 + 4};
 };
 
 class GrandChild inherits Child {};
@@ -64,9 +64,8 @@ class Main inherits IO {
     fake(x : Int, y : String, z : IO, a : Bool, b : Object, c : Main, d : Parent) : Object {1};
 };
 
-class Fool inherits Main {
-    x: String;
-};
+class Fool inherits Main {};
+
 class Ew {
     test(x : Int, y : String) : Int {1 + 2 + 3};
 };
