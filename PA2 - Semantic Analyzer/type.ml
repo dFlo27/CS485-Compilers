@@ -4,75 +4,63 @@ open Printf
 
 exception No_class_main
 exception No_method_main
-exception Cycle of string list
-exception Class_redefine of string list
-exception Class_unknown of string list
-exception Attribute_redefine of string list
-exception Attribute_failure of string list
+exception Cycle                     of string list
+exception Class_redefine            of string * string
+exception Class_inherits            of string list
+exception Class_unknown             of string list
+exception Attribute_redefine        of string list
+exception Attribute_unknown         of string list
 exception Method_formal_length
-exception Method_formal_redefine of string list
-exception Method_type_redefine of string list
-exception Method_failure of string list
+exception Method_formal_redefine    of string list
+exception Method_type_redefine      of string list
 
-(* Data Structures - Used to store the AST while type checking ---------------------------------------------------------------------------------------------- *)
-type ast_method = {
-    method_name     : string;
-    method_formals  : string list list;
-    method_type     : string;
-    method_type_loc : string;
-    method_body     : string list;
-}
+(* Data Structures - The record is to store a class and the rest is for the built-in classes ---------------------------------------------------------------- *)
 
-type ast_attribute = {
-    attr_name : string;
-    attr_init : string;
-    attr_body : string list;
-    attr_loc  : string;
-    type_loc  : string;
-    attr_type : string;
-}
-
-type ast_class = {
+type a_class = {
     name            : string;
-    attr_location   : int;
-    location        : string;
-    inherits        : string list;
-    features_length : string;
-    attributes      : ast_attribute list;
-    methods         : ast_method list
+    parent          : string;
+    attribute_env   : (string, string) Hashtbl.t;
+    method_env      : (string, string list) Hashtbl.t;
+    ic_pointers     : int list;
 }
 
+let class_hash    = Hashtbl.create 50 
+let a_std_hash    = Hashtbl.create 0    (* This is for std_classes. Saves memory, I think *)
+let m_std_hash    = Hashtbl.create 0    (* This is for Int and Bool, they don't have methods *)
+let m_object_hash = Hashtbl.create 0    (* This is for Object *)
+let () = Hashtbl.add m_object_hash "abort"     ["Object"]
+let () = Hashtbl.add m_object_hash "type_name" ["Object"]
+let () = Hashtbl.add m_object_hash "copy"      ["SELF_TYPE"]
+let m_io_hash = Hashtbl.create 0        (* This is for IO *)
+let () = Hashtbl.add m_io_hash "out_string" ["SELF_TYPE"; "String"]
+let () = Hashtbl.add m_io_hash "out_int"    ["SELF_TYPE"; "Int"]
+let () = Hashtbl.add m_io_hash "in_string"  ["String"]
+let () = Hashtbl.add m_io_hash "in_int"     ["Int"]
+let m_string_hash = Hashtbl.create 0    (* This is for String *)
+let () = Hashtbl.add m_string_hash "length" ["Int"]
+let () = Hashtbl.add m_string_hash "concat" ["String"; "String"]
+let () = Hashtbl.add m_string_hash "substr" ["String"; "Int"; "Int"]
 let std_classes = [
-    {name = "Object"; attr_location = 0; inherits = ["no_inherits"]; location = "0"; features_length = "0"; attributes = []; methods = []};
-    {name = "IO";     attr_location = 0; inherits = ["no_inherits"]; location = "0"; features_length = "0"; attributes = []; methods = []};
-    {name = "Int";    attr_location = 0; inherits = ["no_inherits"]; location = "0"; features_length = "0"; attributes = []; methods = []};
-    {name = "String"; attr_location = 0; inherits = ["no_inherits"]; location = "0"; features_length = "0"; attributes = []; methods = []};
-    {name = "Bool";   attr_location = 0; inherits = ["no_inherits"]; location = "0"; features_length = "0"; attributes = []; methods = []}
+    {name = "Object"; parent = "";       ic_pointers = []; attribute_env = a_std_hash; method_env = m_object_hash};
+    {name = "IO";     parent = "Object"; ic_pointers = []; attribute_env = a_std_hash; method_env = m_io_hash};
+    {name = "Int";    parent = "Object"; ic_pointers = []; attribute_env = a_std_hash; method_env = m_std_hash};
+    {name = "String"; parent = "Object"; ic_pointers = []; attribute_env = a_std_hash; method_env = m_string_hash};
+    {name = "Bool";   parent = "Object"; ic_pointers = []; attribute_env = a_std_hash; method_env = m_std_hash}
 ]
 
-(* Helper Functions - Names are self-explanatory ------------------------------------------------------------------------------------------------------------ *)
+(* Helper Functions ----------------------------------------------------------------------------------------------------------------------------------------- *)
 
-(* Temporary Method to skip through attribute initialization - remove later *)
-let rec class_skip ic =
-    let ic_pointer = pos_in ic in
-    try let _ = input_line ic in
-    let str = input_line ic in
-    if str = String.capitalize_ascii str then
-        try let str = input_line ic in 
-        seek_in ic ic_pointer;
-        if str = "inherits" || str = "no_inherits" then ()
-        else let _ = input_line ic in class_skip ic
-        with End_of_file -> ();
-    else class_skip ic
-    with End_of_file -> ();;
+let rec feature_skip ic =
+    let pointer = pos_in ic in
+    match input_line ic with
+    | "method" | "attribute_no_init" | "attribute_init" -> seek_in ic pointer
+    | _ -> feature_skip ic
 
-let rec create_edges lst = 
-    match lst with
-    | [] -> []
-    | cl::tail -> 
-        match List.length cl.inherits with
-        | 1 -> ["Object";               cl.name] :: create_edges tail
-        | n -> [List.nth cl.inherits 1; cl.name] :: create_edges tail;;
+(* Skips features in class. Moves in_channel to next class *)
+let rec class_skip ic feature_length = 
+    match feature_length with
+    | 0 -> ()
+    | _ -> feature_skip ic; class_skip ic (feature_length - 1)
 
 (* Prints a string list in the format: [a1, a2, ..., an]\n
     Used to print the inheritance cycle error             *)
@@ -93,7 +81,6 @@ let is_source lst node = List.exists (fun ele -> List.nth ele 1 = node) lst |> n
 (* Removes all duplicates, keeping the leftmost elements in the list *)
 let uniq_cons lst ele = if List.mem ele lst then lst else ele :: lst
 let remove_from_left lst = List.rev (List.fold_left uniq_cons [] lst)
-
 
 (*  Performs Kahn's Algorithm as shown from wikipedia; 
     Returns list of sorted strings or will cry Error if a cycle is found *)
@@ -119,7 +106,7 @@ let topo_sort edges =
 let rec new_expression ic =
     let (*program_line*) _ = input_line ic in
     match input_line ic with
-    | "assign"  -> let (* ident. loc, ident. *)_ = input_line ic, input_line ic in (* Initializer *) new_expression ic
+    | "assign"  -> let (* ident. loc, ident. *) _ = input_line ic, input_line ic in (* Initializer *) new_expression ic
     | "dynamic_dispatch" ->
         let (* ident. *) _ = new_expression ic in let (* method & loc *) _ = input_line ic, input_line ic in 
         for i = 1 to input_line ic |> int_of_string (* # of arguments *) do
@@ -179,7 +166,7 @@ let rec find_f lst1 lst2 =
     if List.is_empty lst1 then [""]
     else if List.hd lst1 != List.hd lst2 then List.hd lst2
     else find_f (List.tl lst1) (List.tl lst2)
-
+(*
 let rec new_method_list ic env = 
     if input_line ic != "method" then []
     else 
@@ -237,65 +224,82 @@ let rec new_attr_list ic env =
         | "method" -> seek_in ic return; [attr]
         | line     -> seek_in ic return;  attr :: new_attr_list ic env
         with End_of_file -> [attr];;
+*)
 
-let rec new_class_list ic length =
+let rec parent_check identifier i_location child superclasses =
+    if child.parent = "Object" || child.parent = "IO" then 
+        false
+    else
+        let parent = List.find (fun cl -> child.parent = cl.name) superclasses in
+        if Hashtbl.mem parent.attribute_env identifier then
+            true
+        else
+            parent_check identifier i_location parent superclasses
+
+let rec new_features_list ic cl class_hash superclasses length = 
     match length with
-    | 0 -> []
-    | l ->
-        let input = (input_line ic, input_line ic) in
-        if List.mem (fst input) ["Bool"; "Object"; "IO"; "Int"; "String"] then
-            let () = printf "ERROR: %s: Type-Check: class %s redefined\n" (snd input) (fst input) in exit 1
+    | 0 -> ()
+    | _ -> 
+        let _ = input_line ic in                                                (* feature location *)
+        let feature_initial = input_line ic in
+        match feature_initial with
+        | "method" -> new_features_list ic cl class_hash superclasses (length - 1)
+        | "attribute_init" | "attribute_no_init" -> 
+            let identifier_location = input_line ic in
+            let identifier          = input_line ic in
+            if parent_check identifier identifier_location cl superclasses then
+                raise (Attribute_redefine [identifier_location; cl.name; identifier]);
+            let type_location       = input_line ic in
+            let type_attribute      = input_line ic in
+            if Hashtbl.mem class_hash type_attribute |> not then
+                raise (Attribute_unknown [type_location; cl.name; identifier; type_attribute]);
+            Hashtbl.add cl.attribute_env identifier type_attribute;
+            if feature_initial = "attribute_init" then
+
+            new_features_list ic cl class_hash superclasses (length - 1)
+        | _ -> raise (Failure "new_features_list failed")
+
+let rec get_features acc ic class_hash classes = 
+    match classes with 
+    | [] -> acc
+    | head::tail -> 
+        if head.ic_pointers = [] then
+            head :: get_features (head :: acc) ic class_hash tail
+        else 
+            let () = seek_in ic (List.nth head.ic_pointers 1) in
+            let feature_length = input_line ic |> int_of_string in
+            if feature_length = 0 then 
+                head :: get_features (head :: acc) ic class_hash tail
+            else
+                let () = new_features_list ic head class_hash acc feature_length in
+                get_features (head :: acc) ic class_hash tail
+
+let rec new_class_list acc ic length =
+    match length with
+    | 0 -> acc
+    | _ ->
+        let class_pointer = pos_in     ic in
+        let program_line  = input_line ic in
+        let class_name    = input_line ic in
+        if List.exists (fun ele -> ele.name = class_name) acc then
+            raise (Class_redefine (program_line, class_name))
         else let inheritable = (input_line ic = "inherits") in
-        let class_inheritance = if inheritable then "inherits"::[input_line ic; input_line ic] else ["no_inherits"] in
-        if inheritable && List.mem (List.nth class_inheritance 1) ["Bool"; "Int"; "String"] then 
-            let () = printf "ERROR: %s: Type-Check: class %s inherits from %s\n" (snd input) (fst input) (List.nth class_inheritance 1) in exit 1
-        else let feature_length = input_line ic in
-        let ic_pointer = pos_in ic in
-        if feature_length != "0" then class_skip ic;        (*Permanent for now*)
+        let class_inheritance = if inheritable then (input_line ic, input_line ic) else ("","") in
+        if inheritable && List.mem (fst class_inheritance) ["Bool"; "Int"; "String"] then 
+            raise (Class_inherits [snd class_inheritance; class_name; fst class_inheritance]);
+        let feature_pointer = pos_in   ic in
+        class_skip ic (input_line ic |> int_of_string);
         let c = {
-            name            = fst input; 
-            location        = snd input; 
-            attr_location   = ic_pointer;
-            inherits        = class_inheritance;
-            features_length = feature_length;
-            attributes      = [];
-            methods         = []
-        } in c :: new_class_list ic (l - 1);;
+            name          = class_name;
+            parent        = fst class_inheritance;
+            attribute_env = Hashtbl.create 50;
+            method_env    = Hashtbl.create 50; 
+            ic_pointers   = class_pointer :: feature_pointer :: []
+        } in 
+        new_class_list (c :: acc) ic (length - 1)
 
 (* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
-
-let class_type_check acc ele = 
-    if List.exists (String.equal ele) acc then raise (Class_Redefine, ele) else ele :: acc
-
-let init_method_hash m_env = 
-    Hashtbl.add m_env "abort"     ["0"; "Object"];
-    Hashtbl.add m_env "type_name" ["0"; "String"];
-    Hashtbl.add m_env "copy"      ["0"; "SELF_TYPE"]; 
-
-let init_io_hash m_env = 
-    Hashtbl.add m_env "out_string" ["1"; "String"; "SELF_TYPE"];
-    Hashtbl.add m_env "out_int"    ["1": "Int"; "SELF_TYPE"];
-    Hashtbl.add m_env "in_string"  ["0"; "String"];
-    Hashtbl.add m_env "in_int"     ["0"; "String"];
-
-let rec process_features ic ast path a_env m_env parent = 
-    match path with 
-    | [] -> []
-    | head::tail -> try let cl = List.find (fun e -> e.name = head) ast in
-        if cl.features_length = "0" then cl :: process_attributes ic ast tail a_env m_env head
-        else let () = seek_in ic cl.attr_location in
-            if List.hd cl.inherits != "inherits" || List.nth cl.inherits 1 != parent then
-                Hashtbl.clear a_env;
-                init_method_hash (Hashtbl.clear m_env);
-                if parent = "IO" then init_io_hash m_env;
-            try let cl = {cl with attributes = new_attr_list ic a_env} in
-            let cl = if input_line ic = "method" 
-                then {cl with methods = new_method_list ic m_env}
-                else cl
-            in cl :: process_attributes ic ast tail a_env m_env head 
-            with Attribute_redefine lst -> raise (Attribute_failure (cl.name :: lst))
-            with Not_found -> process_attributes ic ast tail a_env m_env head;;
-
+(*
 let rec print_attribute oc lst =
     match lst with
     | [] -> ();
@@ -311,36 +315,53 @@ let rec print_map oc ast =
         fprintf oc "%s\n%i\n" cl.name (List.length cl.attributes);
         print_attribute oc cl.attributes;
         print_map oc tail;;
-
+*)
 (* 'Main' Method of the program. Calls all functions and returns either an error or a .cl-ast file ---------------------------------------------------------- *)
 let main ic =
-    match input_line ic with                                                                               (* Handles the empty file case *)
-    | "0"    -> error No_Main                                                                              (* If no class exists, cry no class Main *)
-    | length -> let ast = new_class_list ic (length |> int_of_string) in                                   (* Else read classes superficially *)
-    LList.fold_left class_type_check ast
-    let path = create_edges ast |> topo_sort in
-    let ast = process_features ic ast path (Hashtbl.create 50) (Hashtbl.create 50) "Object" in
-        let oc = String.concat "temp" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out in
-            fprintf oc "class_map\n%i\n" (List.length ast);
-            List.fast_sort (fun cl1 cl2 -> String.compare cl1.name cl2.name) (std_classes @ ast) |> print_map oc; 
+    match input_line ic with                                                                         (* Handles the empty file case *)
+    | "0"    -> raise No_class_main                                                                  (* If no class exists, cry no class Main *)
+    | length -> let classes = new_class_list std_classes ic (length |> int_of_string) in             (* Else read classes superficially *)
+        List.iter (fun cl -> Hashtbl.add class_hash cl.name true) classes;
+        match List.find (fun p -> Hashtbl.mem class_hash p.parent |> not) classes with 
+        | unknown -> 
+            seek_in ic (List.hd unknown.ic_pointers);
+            let _ = input_line ic, input_line ic, input_line ic in
+            raise (Class_unknown [input_line ic; unknown.name; unknown.parent])
+        | exception Not_found -> 
+            List.iter (fun cl -> Hashtbl.add class_hash cl.name true) std_classes;
+            let path    = List.map (fun cl -> [cl.parent; cl.name]) classes |> topo_sort in
+            let classes = List.map (fun name -> List.find (fun cl -> name = cl.name) classes) path in
+            let classes = get_features [] ic class_hash classes in
+            let oc = String.concat "temp" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out in
+            fprintf oc "class_map\n%i\n" (List.length classes);
+            List.fast_sort (fun cl1 cl2 -> String.compare cl1.name cl2.name) classes |> print_map oc;
         ;;
 
 (* Error handler - Calls main method and handles all errors encountered ------------------------------------------------------------------------------------- *)
 
 let ic = open_in Sys.argv.(1) in (* Opens input file. will crash if file does not exist *)      
     try main ic
-with No_class_main ->
-    let () = printf "ERROR: 0: Type-Check: class Main not found\n" in exit 1
-with No_method_main ->
+with
+| No_class_main  ->
+    let () = printf "ERROR: 0: Type-Check: class Main not found\n" in exit 1 
+| No_method_main ->
     let () = printf "ERROR: 0: Type-Check: class Main method main not found\n" in exit 1
-with Cycle lst ->                                                           (* Cycle error *)
+| Class_inherits err ->
+    let () = printf "ERROR: %s: Type-Check: class %s inherits from %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+| Class_redefine (location, name) ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefined\n" location name in exit 1
+| Class_unknown  err ->
+    let () = printf "ERROR: %s: Type-Check: class %s inherits unknown class %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+| Cycle err ->                                                           (* Cycle error *)
     printf "ERROR: 0: Type-Check: inheritance cycle: ";                    
-    if List.length lst = 1 then                                             (* We want to print only class if cycle contains one element only *)
-        let () = printf "%s\n" (List.hd lst) in exit 1                      (* Prints only class name and not brackets: c1                    *)
+    if List.length err = 1 then                                             (* We want to print only class if cycle contains one element only *)
+        let () = printf "%s\n" (List.hd err) in exit 1                      (* Prints only class name and not brackets: c1                    *)
     else 
-        let () = printf "[" in let () = print_cycle lst in exit 1;           (* Prints cycle with brackets and commas: [c1, c2, c3, ..., cn]   *)
-with Attribute_failure lst ->
-    let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" (List.nth lst 2) (List.hd lst) (List.nth lst 1) in exit 1
+        let () = printf "[" in let () = print_cycle err in exit 1           (* Prints cycle with brackets and commas: [c1, c2, c3, ..., cn]   *)
+| Attribute_redefine err ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+| Attribute_unknown err  ->
+    let () = printf "ERROR: %s: Type-Check: class %s has attribute %s with unknown type %s" (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;
 
     (* Potentially, instead of saving every single line in types, we can just save the type of each attribute, method, and function.
    Then, we can just look them up when we print out the ast tree.

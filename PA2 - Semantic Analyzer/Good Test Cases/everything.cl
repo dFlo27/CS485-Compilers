@@ -64,7 +64,9 @@ class Main inherits IO {
     fake(x : Int, y : String, z : IO, a : Bool, b : Object, c : Main, d : Parent) : Object {1};
 };
 
-class Fool inherits Main {};
+class Fool inherits Main {
+    x: String;
+};
 class Ew {
     test(x : Int, y : String) : Int {1 + 2 + 3};
 };
