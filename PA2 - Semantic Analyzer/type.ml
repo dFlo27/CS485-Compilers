@@ -62,14 +62,15 @@ let rec class_skip ic feature_length =
     | 0 -> ()
     | _ -> feature_skip ic; class_skip ic (feature_length - 1)
 
-let create_path class_name class_info path =
-    [class_info.parent; class_name] :: path
+let create_path class_name class_info path = [class_info.parent; class_name] :: path
+
 let check_parents ic class_name class_info =
-    if Hashtbl.mem classes class_info.parent then ()
-    else 
-        seek_in ic (List.hd class_info.ic_pointers);
-        let _ = input_line ic, input_line ic, input_line ic in
-        raise (Class_unknown [input_line ic; class_name; class_info.parent])
+    if class_name = "Object" then ()
+    else match Hashtbl.mem classes class_info.parent with
+    | true  -> ()
+    | false -> 
+        seek_in ic (List.hd class_info.ic_pointers);                
+        raise (Class_unknown [input_line ic; class_name; class_info.parent]) 
 
 (* Prints a string list in the format: [a1, a2, ..., an]\n
     Used to print the inheritance cycle error             *)
@@ -267,25 +268,25 @@ let rec get_features ic path =
     | [] -> ()
     | head::tail -> 
         let c_class = Hashtbl.find classes head in
-        if c_class.ic_pointers = [] then
+        if List.is_empty c_class.ic_pointers then
             get_features ic tail
         else 
-            let () = seek_in ic (List.nth c_class.ic_pointers 1) in
-            let feature_length = input_line ic |> int_of_string in
-                read_features ic head c_class feature_length;
+            let () = seek_in ic (List.nth c_class.ic_pointers 1)  in
+            let feature_length = input_line ic |> int_of_string   in
+            let () = read_features ic head c_class feature_length in
                 get_features ic tail
 
 let rec read_classes ic length =
     match length with
     | 0 -> ()
     | _ ->
-        let class_pointer = pos_in     ic in
+        let class_pointer = pos_in ic in
         let program_line  = input_line ic in
         let class_name    = input_line ic in
         if Hashtbl.mem classes class_name then
             raise (Class_redefine (program_line, class_name))
         else let inheritable = (input_line ic = "inherits") in
-        let class_inheritance = if inheritable then (input_line ic, input_line ic) else ("","") in
+        let class_inheritance = if inheritable then (input_line ic, input_line ic) else ("Object", "") in
         if inheritable && List.mem (fst class_inheritance) ["Bool"; "Int"; "String"] then 
             raise (Class_inherits [snd class_inheritance; class_name; fst class_inheritance]);
         let feature_pointer = pos_in   ic in
@@ -294,7 +295,7 @@ let rec read_classes ic length =
             parent        = fst class_inheritance;
             attribute_env = Hashtbl.create 50;
             method_env    = Hashtbl.create 50; 
-            ic_pointers   = class_pointer :: feature_pointer :: []
+            ic_pointers   = [class_pointer; feature_pointer]
         } in 
         Hashtbl.add classes class_name class_info;
         read_classes ic (length - 1)
@@ -302,18 +303,19 @@ let rec read_classes ic length =
 (* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
 let rec print_body ic oc =
     let ic_pointer = pos_in ic in
-    let line       = input_line ic in
+    try let line       = input_line ic in
     match line with
     | "method" | "attribute_init" | "attribute_no_init" -> seek_in ic ic_pointer; ()
-    | _ ->  fprintf oc "%s\n" line; 
-            print_body ic oc;;
+    | _ ->  if int_of_string_opt line = None then 
+                let () = fprintf oc "%s\n" line in
+                    print_body ic oc;
+    with End_of_file -> ();;
 
 
 let rec print_attributes ic oc length =
     match length with
     | 0 -> ()
     | _ ->
-        fprintf oc "%s\n" (input_line ic); 
         let inherits = input_line ic in
         if inherits = "attribute_init" then
             fprintf oc "initializer\n"
@@ -327,21 +329,26 @@ let rec print_map ic oc path =
     | [] -> close_out oc
     | head::tail -> 
         let cl = Hashtbl.find classes head in
-        seek_in ic (List.nth cl.ic_pointers 2);
-        let length = input_line ic |> int_of_string in
-        fprintf oc "%s\n%i\n" head length;
-        print_attributes ic oc length;
+        if List.is_empty cl.ic_pointers |> not then
+            let () = seek_in ic (List.nth cl.ic_pointers 1) in
+            let length = input_line ic |> int_of_string     in
+            let () = fprintf oc "%s\n%i\n" head length      in
+            print_attributes ic oc length
+        else if head = "IO" then
+            fprintf oc "IO\n"
+        else
+            fprintf oc "%s\n0\n" head;
         print_map ic oc tail;;
 
 (* 'Main' Method of the program. Calls all functions and returns either an error or a .cl-ast file ---------------------------------------------------------- *)
 let main ic =
     match input_line ic with                                                                         (* Handles the empty file case                 *)
     | "0"    -> raise No_class_main                                                                  (* If no class exists, cry no class Main       *)
-    | length ->                                                                                      (* Else read classes superficially             *)
+    | length ->                                                                                      
         read_classes ic (length |> int_of_string);                                                   (* Add program classes to hash table classes   *)
-        Hashtbl.iter (check_parents ic) classes;                                                     (* Check for any unknown classes in inherits   *)
-        let path    = Hashtbl.fold create_path classes [] |> topo_sort in                            (* Create a path to for feature type checking  *)
-        get_features ic path;
+        Hashtbl.iter (check_parents ic) classes;                                                     (* Check all parents for any unknown classes   *)
+        let path    = List.tl (Hashtbl.fold create_path classes [] |> topo_sort) in                  (* Create a path for feature type checking     *)
+        get_features ic path;                                                                        (* List.tl removes Object's parent from path   *)
         let oc = String.concat "temp" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out in
             fprintf oc "class_map\n%i\n" (Hashtbl.length classes);
             List.fast_sort String.compare path |> print_map ic oc;
@@ -357,11 +364,13 @@ with
 | No_method_main ->
     let () = printf "ERROR: 0: Type-Check: class Main method main not found\n" in exit 1
 | Class_inherits err ->
-    let () = printf "ERROR: %s: Type-Check: class %s inherits from %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+    let () = printf "ERROR: %s: Type-Check: class %s inherits from %s\n" 
+        (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
 | Class_redefine (location, name) ->
     let () = printf "ERROR: %s: Type-Check: class %s redefined\n" location name in exit 1
 | Class_unknown  err  ->
-    let () = printf "ERROR: %s: Type-Check: class %s inherits unknown class %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+    let () = printf "ERROR: %s: Type-Check: class %s inherits unknown class %s\n" 
+        (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
 | Cycle err           ->                                                           (* Cycle error *)
     printf "ERROR: 0: Type-Check: inheritance cycle: ";                    
     if List.length err = 1 then                                             (* We want to print only class if cycle contains one element only *)

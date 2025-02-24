@@ -3,8 +3,6 @@
 
 
 
-
-
 class Foo inherits Main {};
 
 class Main {
