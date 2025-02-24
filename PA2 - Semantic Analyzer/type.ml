@@ -12,6 +12,7 @@ exception Attribute_redefine         of string list
 exception Attribute_unknown          of string list
 exception Method_formal_length       of string list
 exception Method_formal_redefine     of string list
+exception Method_return_redefine     of string list
 exception Method_unknown_formal_type of string list 
 exception Method_unknown_return_type of string list
 
@@ -23,7 +24,6 @@ type a_class = {
     method_env      : (string, string list) Hashtbl.t;
     ic_pointers     : int list;
 }
-
 
 let empty_a_hash    = Hashtbl.create 0    (* This is for classes with no attributes. Probably will save memory, I think *)
 let empty_m_hash    = Hashtbl.create 0    (* This is for classes with no methods.  *)
@@ -47,8 +47,6 @@ let () = Hashtbl.add classes "IO"     {parent = "Object"; ic_pointers = []; attr
 let () = Hashtbl.add classes "Int"    {parent = "Object"; ic_pointers = []; attribute_env = empty_a_hash; method_env = empty_m_hash }
 let () = Hashtbl.add classes "String" {parent = "Object"; ic_pointers = []; attribute_env = empty_a_hash; method_env = m_string_hash}
 let () = Hashtbl.add classes "Bool"   {parent = "Object"; ic_pointers = []; attribute_env = empty_a_hash; method_env = empty_m_hash }
-
-
 
 (* Helper Functions ----------------------------------------------------------------------------------------------------------------------------------------- *)
 
@@ -112,7 +110,7 @@ let topo_sort edges =
         let s = List.fast_sort String.compare (List.filter (is_source edges) nodes) in  (* List s stores all sources in nodes              *)
             kahn_algorithm s edges                                                      (* Function call to Kahn's algorithm               *)
 
-(* AST Constructors - Each Method reads a part of the ast tree ---------------------------------------------------------------------------------------------- *)
+(* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
 
 let rec new_expression ic =
     let (*program_line*) _ = input_line ic in
@@ -170,23 +168,33 @@ let rec new_expression ic =
 
 let rec new_formal_list ic length = 
     match length with
-    | 0 -> []
+    | 0 -> 
+        let type_location = input_line ic in
+        let return_type   = input_line ic in 
+        if Hashtbl.mem classes return_type |> not then
+            raise (Method_unknown_return_type [type_location; return_type]) 
+        else []
     | _ -> 
         let (* identifier_location *) _ = input_line ic in
         let (* identifier          *) _ = input_line ic in
         let formal_location = input_line ic in
         let formal_type     = input_line ic in
         if Hashtbl.mem classes formal_type |> not then
-            raise (Method_unknown_formal_type [formal_location])
+            raise (Method_unknown_formal_type [formal_location; formal_type])
         else 
             formal_type :: new_formal_list ic (length - 1)
 
 let rec override_formal ic overridden length =
+    if List.is_empty overridden then
+        raise (Method_formal_length []);
     match length with
     | 0 -> 
-        if List.is_empty overridden then ()
-        else
-            raise (Method_formal_length [])
+        if List.is_empty (List.tl overridden) then
+            raise (Method_formal_length []);
+        let type_location = input_line ic in
+        let return_type   = input_line ic in 
+        if return_type != List.hd overridden then
+            raise (Method_return_redefine [type_location; List.hd overridden; return_type]);
     | _ ->
         let (* identifier_location *) _ = input_line ic in
         let identifier      = input_line ic in
@@ -225,13 +233,20 @@ let rec read_features ic class_name class_info length =
         let identifier          = input_line ic in
         match feature with
         | "method" -> 
-            let formals_length  = input_line ic in
+            let formals_length  = input_line ic |> int_of_string in
             let formals = find_overridden identifier class_name class_info in
             if List.is_empty formals then
-                Hashtbl.add class_info.method_env identifier (new_formal_list ic (formals_length |> int_of_string))
-            else
-                let () = override_formal ic formals (formals_length |> int_of_string) in
-                Hashtbl.add class_info.method_env identifier formals;
+                try Hashtbl.add class_info.method_env identifier (new_formal_list ic formals_length)
+                with
+                | Method_unknown_formal_type err -> raise (Method_unknown_formal_type [List.hd err; class_name; identifier; List.nth err 1]) 
+                | Method_unknown_return_type err -> raise (Method_unknown_return_type [List.hd err; class_name; identifier; List.nth err 1])
+            else let () = 
+                try override_formal ic formals formals_length
+                with 
+                | Method_formal_length   err -> raise (Method_formal_length   [identifier_location; class_name; identifier])
+                | Method_formal_redefine err -> raise (Method_formal_redefine (err @ [class_name; identifier]))
+                | Method_return_redefine err -> raise (Method_return_redefine ([List.hd err; class_name; identifier] @ List.tl err))
+                in Hashtbl.add class_info.method_env identifier formals;
             feature_skip ic;
             read_features ic class_name class_info (length - 1)
         | "attribute_init" | "attribute_no_init" ->
@@ -285,20 +300,37 @@ let rec read_classes ic length =
         read_classes ic (length - 1)
 
 (* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
+let rec print_body ic oc =
+    let ic_pointer = pos_in ic in
+    let line       = input_line ic in
+    match line with
+    | "method" | "attribute_init" | "attribute_no_init" -> seek_in ic ic_pointer; ()
+    | _ ->  fprintf oc "%s\n" line; 
+            print_body ic oc;;
 
-let rec print_attribute ic oc attribute_env =
-    fprintf oc "%s\n%s\n" attr.attr_init attr.attr_name;
-    List.iter (fprintf oc "%s\n") attr.attr_body;
-    print_attribute oc tail;;
+
+let rec print_attributes ic oc length =
+    match length with
+    | 0 -> ()
+    | _ ->
+        fprintf oc "%s\n" (input_line ic); 
+        let inherits = input_line ic in
+        if inherits = "attribute_init" then
+            fprintf oc "initializer\n"
+        else
+            fprintf oc "no_initializer\n";
+        print_body ic oc;
+        print_attributes ic oc (length - 1);;
 
 let rec print_map ic oc path = 
     match path with
     | [] -> close_out oc
     | head::tail -> 
         let cl = Hashtbl.find classes head in
-        fprintf oc "%s\n%i\n" head (Hashtbl.length cl.attribute_env);
-        seek_in ic (List.nth cl.ic_pointers 1);
-        print_attribute ic oc cl.attribute_env;
+        seek_in ic (List.nth cl.ic_pointers 2);
+        let length = input_line ic |> int_of_string in
+        fprintf oc "%s\n%i\n" head length;
+        print_attributes ic oc length;
         print_map ic oc tail;;
 
 (* 'Main' Method of the program. Calls all functions and returns either an error or a .cl-ast file ---------------------------------------------------------- *)
@@ -328,22 +360,37 @@ with
     let () = printf "ERROR: %s: Type-Check: class %s inherits from %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
 | Class_redefine (location, name) ->
     let () = printf "ERROR: %s: Type-Check: class %s redefined\n" location name in exit 1
-| Class_unknown  err ->
+| Class_unknown  err  ->
     let () = printf "ERROR: %s: Type-Check: class %s inherits unknown class %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
-| Cycle err ->                                                           (* Cycle error *)
+| Cycle err           ->                                                           (* Cycle error *)
     printf "ERROR: 0: Type-Check: inheritance cycle: ";                    
     if List.length err = 1 then                                             (* We want to print only class if cycle contains one element only *)
         let () = printf "%s\n" (List.hd err) in exit 1                      (* Prints only class name and not brackets: c1                    *)
     else 
         let () = printf "[" in let () = print_cycle err in exit 1           (* Prints cycle with brackets and commas: [c1, c2, c3, ..., cn]   *)
-| Attribute_redefine err ->
-    let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
-| Attribute_unknown err  ->
-    let () = printf "ERROR: %s: Type-Check: class %s has attribute %s with unknown type %s" (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;
+| Attribute_redefine err->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" 
+        (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1
+| Attribute_unknown err ->
+    let () = printf "ERROR: %s: Type-Check: class %s has attribute %s with unknown type %s" 
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;
+| Method_formal_length err       ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines method %s and changes number of formals\n" 
+        (List.hd err) (List.nth err 1) (List.nth err 2) in exit 1;
+| Method_formal_redefine err     ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines method %s and changes type of formal %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;  
+| Method_return_redefine err    ->
+    let () = printf "ERROR: %s: Type-Check: class %s redefines method %s and changes return type (from %s to %s)\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) (List.nth err 4) in exit 1;
+| Method_unknown_formal_type err ->
+    let () = printf "ERROR: %s: Type-Check: class %s has method %s with formal parameter of unknown type %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;
+| Method_unknown_return_type err ->
+    let () = printf "ERROR: %s: Type-Check: class %s has method %s with unknown return type %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3) in exit 1;
 
-    (* Potentially, instead of saving every single line in types, we can just save the type of each attribute, method, and function.
-   Then, we can just look them up when we print out the ast tree.
-            
+        (*
     1st Pass: Read classes and type check them. We DONT read attributes nor methods because of lack of info from environment and parents.
         Then we should order classes to know which class to safely type check attributes and methods (not expressions) FIRST.
     2nd Pass: Read the attributes and methods of each class in order to build an environment for attributes and methods for EACH class. We can type check for
