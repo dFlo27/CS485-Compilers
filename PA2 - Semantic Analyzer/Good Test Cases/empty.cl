@@ -1,11 +1,7 @@
-
-
-
-
-
-class Foo inherits Main {};
+class Temp {
+    test (x : Int, y : String, self : Int) : Object {1};
+};
 
 class Main {
-    x : Int;
-    main() : Object {new Object};
-};
+    main() : Object {1};
+};  
