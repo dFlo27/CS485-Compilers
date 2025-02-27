@@ -14,6 +14,4 @@ class Two inherits One {
     main() : Object {1};
 };
 
-class Main inherits Two {
-
-};
+class Main inherits Two {}  ;

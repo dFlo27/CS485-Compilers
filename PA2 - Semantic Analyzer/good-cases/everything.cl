@@ -12,7 +12,6 @@ class GGrandChild inherits GrandChild {};
 
 class Main inherits IO {
     e : SELF_TYPE;
-    f : Ew;
     g : Child;
     h : Parent;    
     x : Int <- {1;
@@ -31,12 +30,11 @@ class Main inherits IO {
         false = true;
         true <= true;
         e <- new SELF_TYPE;
-        f <- (new Ew);
         g <- new Child;
         h <- new GGrandChild;
         x <- new Int;
         test(x, z);
-        f.test(x, z);
+        h.test(x, z);
         g@Parent.test(x, z);
         h.test(x, z);
         if 1 = x then 
@@ -76,12 +74,11 @@ class Main inherits IO {
         false = true;
         true <= true;
         e <- new SELF_TYPE;
-        f <- (new Ew);
         g <- new Child;
         h <- new GGrandChild;
         x <- new Int;
         test(x, z);
-        f.test(x, z);
+        h.test(x, z);
         g@Parent.test(x, z);
         h.test(x, z);
         if 1 = x then 
@@ -103,10 +100,4 @@ class Main inherits IO {
     }};
     test(x : Int, y : String) : Int {1 + 2 + 3};
     fake(x : Int, y : String, z : IO, a : Bool, b : Object, c : Main, d : Parent) : Object {1};
-};
-
-class Fool inherits Main {};
-
-class Ew {
-    test(x : Int, y : String) : Int {1 + 2 + 3};
 };

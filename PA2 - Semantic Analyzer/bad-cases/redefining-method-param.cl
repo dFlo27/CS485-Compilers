@@ -7,5 +7,6 @@ class Foo {
 };
 
 class Pooh inherits Foo {
-    method(x : Int) : Int {2};
+    method(x : Int)
+        : Int {2};
 };

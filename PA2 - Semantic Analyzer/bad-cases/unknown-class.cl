@@ -1,4 +1,6 @@
-class Foo inherits SpaceSpaghettiMonster {};
+class Foo 
+inherits 
+SpaceSpaghettiMonster {};
 
 class Main inherits IO {
     main() : Object {

@@ -1,4 +1,5 @@
 class Main {
-    x : Bit;
+    x : 
+    Bit;
     main() : Object{x};
 };

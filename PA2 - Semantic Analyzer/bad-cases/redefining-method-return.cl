@@ -9,5 +9,6 @@ class Foo {
 };
 
 class Boo inherits Foo {
-    fn() : String{"1"};
+    fn() : 
+        String{"1"};
 };
