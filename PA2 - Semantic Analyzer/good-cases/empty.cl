@@ -1,11 +1,13 @@
-class Temp {
-    stain (x : Int, y : Int) : Object {1};
-};
 
-class Main inherits Temp {
-    main() : Object {1};
-    main : Int;
-};  
 
-class Pain {
+
+
+
+class Main {
+    main() : Object {
+        case 1 of
+            x : Int => 1;
+            y : String => 2;
+        esac
+    };
 };
