@@ -4,17 +4,20 @@ open Sys;;
 
 (* All type check errors will raise one of these exceptions *)
 
+(* Class Exceptions *)
 exception No_class_main;;
 exception No_method_main;;
 exception Method_main_has_parameters;;
-exception Cycle                      of string;;
-exception Class_redefine             of string * string;;
-exception Class_self_type            of string;;
-exception Class_inherits             of string list;;
-exception Class_unknown              of string list;;
-exception Attribute_redefine         of string list;;
-exception Attribute_self             of string list;;
-exception Attribute_unknown          of string list;;
+exception Cycle           of string;;
+exception Class_redefine  of string * string;;
+exception Class_self_type of string;;
+exception Class_inherits  of string list;;
+exception Class_unknown   of string list;;
+
+(* Feature Exceptions *)
+exception Attribute_redefine of string list;;
+exception Attribute_self     of string list;;
+exception Attribute_unknown  of string list;;
 exception Method_redefine            of string list;;
 exception Method_formal_duplicate    of string list;;
 exception Method_formal_length       of string list;;
@@ -23,6 +26,25 @@ exception Method_formal_self         of string list;;
 exception Method_return_redefine     of string list;;
 exception Method_unknown_formal_type of string list;;
 exception Method_unknown_return_type of string list;;
+
+(* Expression Exceptions *)
+exception Arithmetic_type of string list;;
+exception Assign_self       of string;;
+exception Assign_nonconform of string list;;
+exception Attribute_nonconform of string list;;
+exception Case_self of string;;
+exception Dispatch_unknown              of string list;;
+exception Dispatch_parameter_mismatch   of int    list;;
+exception Dispatch_parameter_nonconform of string list;;
+exception Static_dispatch_nonconform    of string list;;
+exception Equality_mismatch of string list;;
+exception Identifier_unbound of string list;;
+exception Let_nonconform of string list;;
+exception Let_self       of string;;
+exception Method_nonconform of string list;;
+exception Negate_type  of string list;;
+exception Not_type     of string list;;
+exception Unknown_type of string list;;
 
 (* Data Structures - The record is to store a class's info and the hash tables are to store environments and classes ---------------------------------------- *)
 
@@ -74,7 +96,7 @@ let m_string_hash = Hashtbl.create 0;;      (* This is for String *)
 let () = Hashtbl.add m_string_hash "length" (new_a_method "Int"    []);;
 let () = Hashtbl.add m_string_hash "concat" (new_a_method "String" ["String"]);;
 let () = Hashtbl.add m_string_hash "substr" (new_a_method "String" ["Int"; "Int"]);;
-let classes    = Hashtbl.create 50;;        (* Hash containing all classes *)
+let classes = Hashtbl.create 50;;          (* Hash containing all classes *)
 let () = Hashtbl.add classes "Object" {parent = "";       ic_pointers = []; attribute_env = empty_a_hash; method_env = m_obj_hash   };;
 let () = Hashtbl.add classes "IO"     {parent = "Object"; ic_pointers = []; attribute_env = empty_a_hash; method_env = m_io_hash    };;
 let () = Hashtbl.add classes "Int"    {parent = "Object"; ic_pointers = []; attribute_env = empty_a_hash; method_env = empty_m_hash };;
@@ -84,6 +106,7 @@ let () = Hashtbl.add classes "Bool"   {parent = "Object"; ic_pointers = []; attr
 (* Helper Functions ----------------------------------------------------------------------------------------------------------------------------------------- *)
 
 (* Checks whether an attribute has been defined before in one of the class's ancestors. Return boolean of its existence *)
+
 let rec attribute_has_ancestor identifier child_name child_info =
     match child_name with
     | "Object" -> false
@@ -101,13 +124,10 @@ let rec attribute_length class_name class_info acc =
 
 (* Checks if class's parent is defined in the program. If it's not, raise Class_unknown error *)
 let has_unknown_parent ic class_name class_info =
-    if class_name != "Object" && Hashtbl.mem classes class_info.parent |> not then
+    if String.equal class_name "Object" |> not && Hashtbl.mem classes class_info.parent |> not then  
         let () = seek_in ic (List.hd class_info.ic_pointers) in
         let _  = input_line ic, input_line ic, input_line ic  in           
         raise (Class_unknown [input_line ic; class_name; class_info.parent]);;
-
-(* Adds a parent to child edge to a list that will be sorted by topological sort *)
-let create_path class_name class_info path = [class_info.parent; class_name] :: path;;
 
 (* Least Upper Bound Function - Computes the common ancestor class of two classes. Will always return a class hopefully. ------------------------------------ *)
 let rec find_common_ancestor tree_1 tree_2 prev_class = 
@@ -128,6 +148,13 @@ let lub class_1 class_2 =
         let class_2_ancestors = get_ancestor_tree class_2 |> List.rev in
         find_common_ancestor class_1_ancestors class_2_ancestors "Object";;
 
+let rec method_list class_info m_list =
+    let local_methods = Hashtbl.fold (fun k e acc -> k :: acc) class_info.method_env [] |> List.rev in
+    let m_list = (List.filter (fun e -> List.mem e m_list) local_methods) @ m_list in
+    if String.equal class_info.parent "" |> not then
+        method_list (Hashtbl.find classes class_info.parent) m_list
+    else m_list;;
+
 (* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
 
 let rec conforms_to p_type c_type = 
@@ -135,7 +162,6 @@ let rec conforms_to p_type c_type =
         conforms_to p_type (Hashtbl.find classes c_type).parent
     else if c_type = "Object" then false
     else true;; 
-
 
 (* Provides a way to skip expressions
     There are two cases:
@@ -177,43 +203,6 @@ let handle_main class_info =
     if m.f_parameters != [] then
         raise (Method_main_has_parameters);;
 
-let rec print_body ic oc =
-    let ic_pointer = pos_in ic in
-    try let line   = input_line ic in
-    match line with
-    | "method" | "attribute_init" | "attribute_no_init" -> 
-        seek_in ic ic_pointer; ();
-    | _ ->  
-        let () = fprintf oc "%s\n" line in
-            print_body ic oc;
-    with End_of_file -> ();;
-
-let rec print_class_attributes ic oc length =
-    match length with
-    | 0 -> ();
-    | _ -> 
-        let inherits  = input_line ic in 
-        let (* ident. loc.*) _ = input_line ic in
-        let identifier         = input_line ic in
-        let (* type loc.  *) _ = input_line ic in
-        let attribute_type     = input_line ic in
-        if String.equal inherits "attribute_init" then 
-            fprintf oc "initializer\n"
-        else fprintf oc "no_initializer\n";
-        fprintf oc "%s\n%s\n" identifier attribute_type;
-        if String.equal inherits "attribute_init" then
-            print_body ic oc;
-        print_class_attributes ic oc (length - 1);;
-
-let rec print_all_attributes ic oc class_name class_info =
-    match class_name with
-    | "Bool" | "Int" | "IO" | "Object" | "String" -> ();
-    | _ ->
-        print_all_attributes ic oc class_info.parent (Hashtbl.find classes class_info.parent);
-        seek_in ic (List.nth class_info.ic_pointers 1);
-        let (* feature length *) _ = input_line ic in
-        print_class_attributes ic oc (Hashtbl.length class_info.attribute_env);;
-
 let rec print_cycle start curr =
     if String.equal start curr |> not then
         let () = printf " %s" curr in
@@ -221,6 +210,9 @@ let rec print_cycle start curr =
 
 
 (*  Topological Sort - Kahn's Algorithm --------------------------------------------------------------------------------------------------------------------- *)
+
+(* Adds a parent to child edge to a list that will be sorted by topological sort *)
+let create_edge class_name class_info edges = [class_info.parent; class_name] :: edges;;
 
 (*  Checks whether a node has no incoming edge. Useful for calculating what task/class should go to list S (called s in this implementation) *)
 let is_source lst node = List.exists (fun ele -> List.nth ele 1 = node) lst |> not;;
@@ -237,27 +229,30 @@ let rec kahn_algorithm s edges =
             let edges = List.filter (fun edge -> List.mem edge m |> not) edges in   (* We filter m out of list edges                                   *)
                 head :: kahn_algorithm (List.fast_sort String.compare ((List.filter (is_source edges) (List.map (fun edge -> List.nth edge 1) m)) @ tail)) edges;;
                 (* ^ This line here adds m to s IF they are sources; THEN sorts new s using string comparison *)
-                    
+
 (*  Takes a string list list and returns a topo-sorted string list *)
-let topo_sort edges =
+let topo_sort classes =
+    let edges = List.tl (Hashtbl.fold create_edge classes []) in
     let nodes = List.flatten edges |> List.sort_uniq String.compare in                  (* Effectively a set containing all nodes in edges *)
-        let s = List.fast_sort String.compare (List.filter (is_source edges) nodes) in  (* List s stores all sources in nodes              *)
-            kahn_algorithm s edges;;                                                    (* Function call to Kahn's algorithm               *)
+    let s = List.fast_sort String.compare (List.filter (is_source edges) nodes) in      (* List s stores all sources in nodes              *)
+        kahn_algorithm s edges;;                                                        (* Function call to Kahn's algorithm               *)
 
 (* AST Tree Parser Functions -------------------------------------------------------------------------------------------------------------------------------- *)
 
 let rec read_expression ic class_info =                                                 (* Reads expressions for now *)
-    let (* program_line *) _ = input_line ic in                                         
+    let program_line = input_line ic in                                         
     match input_line ic with
     | "assign" -> 
         let (* ident. loc *) _ = input_line ic in 
         let identifier = input_line ic in
+        if String.equal identifier "self" then
+            raise (Assign_self program_line);
         let ident_info = Hashtbl.find_opt class_info.attribute_env identifier in
         if ident_info = None then 
-            raise (Failure "Unknown identifier in assign\n");
+            raise (Unknown_type [program_line; identifier]);
         let ident_info = Option.get ident_info in let init_type = read_expression ic class_info in
-        if conforms_to (fst ident_info.a_type) (List.hd init_type) |> not then
-            raise (Failure "Identifier does not conform to identifier type in assign\n");
+        if conforms_to (get_static ident_info) (List.hd init_type) |> not then
+            raise (Assign_nonconform [program_line; List.hd init_type; get_static ident_info]);
         Hashtbl.add class_info.attribute_env identifier {a_type = (get_static ident_info, List.hd init_type); t_list = []};
         List.hd init_type :: init_type
     | "block" -> 
@@ -268,160 +263,160 @@ let rec read_expression ic class_info =                                         
         let last_expr = read_expression ic class_info in
         List.hd last_expr :: (!type_list @ last_expr);
     | "case"  ->
-        let ident_list = read_expression ic class_info in
-        let case_list = ref [] in let case_type = ref "" in
-        for i = 1 to input_line ic |> int_of_string (* # of arguments *) do
-            let (* ident. loc *) _ = input_line ic in let identifier = input_line ic in
-            if String.equal identifier "self" then
-                raise (Failure "Case expression failed, ident is self\n");
-            let (* type loc *)   _ = input_line ic in let ident_type = input_line ic in
-            if Hashtbl.mem classes ident_type |> not then
-                raise (Failure "Case expression failed, type doesn't exist\n");
-            let case_body = read_expression ic class_info in 
-            case_list := !case_list @ case_body;
-            if i = 1 then
-                case_type := List.hd case_body
-            else
-                case_type := lub (!case_type) (List.hd case_body); 
-        done;
-        !case_type :: ident_list @ !case_list;
+        let case_type = ref "" in
+        let case_list = (read_expression ic class_info) @ case_type_check ic class_info case_type (input_line ic |> int_of_string (* # of arguments *)) in
+        !case_type :: case_list;
     | "dynamic_dispatch" ->
         let ident_list = read_expression ic class_info in 
-        let (* method_loc *) _ = input_line ic in 
-        let method_name  = input_line ic in 
-        let method_class = Hashtbl.find_opt classes (List.hd ident_list) in
-        if  method_class = None then
-            raise (Failure "Dynamic dispatch fail, unknown class\n");
-        let method_info = find_method method_name (Option.get method_class) in 
-        if method_info = empty_method then
-            raise (Failure "Dynamic dispatch fail, unknown method\n");
-        let type_list = ref [] in let arguments = ref [] in
-        let method_type = get_m_static method_info in
-        for i = 1 to input_line ic |> int_of_string (* # of bindings *) do 
-            let arg = read_expression ic class_info in
-            if conforms_to method_type (List.hd arg) |> not then 
-                raise (Failure "Dynamic dispatch fail, argument does not conform formal static type\n");
-            arguments := !arguments @ arg;
-        done; 
-        let type_list = !type_list @ !arguments @ (read_expression ic class_info) in
-        method_type :: type_list @ ident_list;
+        let method_loc = input_line ic in let method_name  = input_line ic in 
+        let a_method = find_method method_name (Hashtbl.find classes (List.hd ident_list)) in 
+        if a_method = empty_method then
+            raise (Dispatch_unknown [method_loc; method_name; List.hd ident_list]);
+        let argument_length = input_line ic |> int_of_string in
+        if argument_length != List.length a_method.f_parameters then 
+            raise (Dispatch_parameter_mismatch [int_of_string method_loc; argument_length; List.length a_method.f_parameters]);
+        get_m_static a_method :: ident_list @ (dispatch_type_check ic class_info a_method.f_parameters program_line 0 (input_line ic |> int_of_string));
     | "self_dispatch" ->  
-        let (* method loc *) _ = input_line ic in let method_name = input_line ic in 
-        let method_info = Hashtbl.find_opt class_info.method_env method_name in
-        if method_info = None then 
-            raise (Failure "Self dispatch fail, unknown method\n");
-        let type_list = ref [] in let arguments = ref [] in
-        let method_type = get_m_static (Option.get method_info) in
-        for i = 1 to input_line ic |> int_of_string (* # of bindings *) do 
-            let arg = read_expression ic class_info in
-            if conforms_to method_type (List.hd arg) |> not then 
-                raise (Failure "Self dispatch fail, argument does not conform formal static type\n");
-            arguments := !arguments @ arg;
-        done; 
-        let type_list = !type_list @ !arguments @ (read_expression ic class_info) in
-        method_type :: type_list;
+        let method_loc = input_line ic in let method_name = input_line ic in 
+        let a_method = Hashtbl.find_opt class_info.method_env method_name in
+        if a_method = None then 
+            raise (Dispatch_unknown [method_loc; method_name; Hashtbl.fold (fun k e acc -> if e = class_info then k else acc) classes ""]);
+        let argument_length = input_line ic |> int_of_string in
+        if argument_length != List.length (Option.get a_method).f_parameters then 
+            raise (Dispatch_parameter_mismatch [int_of_string method_loc; argument_length; List.length (Option.get a_method).f_parameters]);
+        get_m_static (Option.get a_method) :: (dispatch_type_check ic class_info (Option.get a_method).f_parameters program_line 0 (input_line ic |> int_of_string));
     | "static_dispatch" -> 
         let ident_list = read_expression ic class_info in 
         let (* parent_loc *) _ = input_line ic in let parent = input_line ic in 
-        let method_name  = input_line ic in 
-        let method_class = Hashtbl.find_opt classes (List.hd ident_list) in
-        if  method_class = None then
-            raise (Failure "Static dispatch fail, unknown class\n");
         if conforms_to parent (List.hd ident_list) |> not then
-            raise (Failure "Parent class does not conform to ident\n"); 
-        let method_info = find_method method_name (Option.get method_class) in 
-        if method_info = empty_method then
-            raise (Failure "Static dispatch fail, unknown method\n");
-        let type_list = ref [] in let arguments = ref [] in
-        let method_type = get_m_static method_info in
-        for i = 1 to input_line ic |> int_of_string (* # of bindings *) do 
-            let arg = read_expression ic class_info in
-            if conforms_to method_type (List.hd arg) |> not then 
-                raise (Failure "Static dispatch fail, argument does not conform formal static type\n");
-            arguments := !arguments @ arg;
-        done; 
-        let type_list = !type_list @ !arguments @ (read_expression ic class_info) in
-        method_type :: type_list @ ident_list;
+            raise (Static_dispatch_nonconform [program_line; List.hd ident_list; parent]);
+        let method_loc = input_line ic in let method_name  = input_line ic in 
+        let a_method = find_method method_name (Hashtbl.find classes (List.hd ident_list)) in 
+        if a_method = empty_method then
+            raise (Dispatch_unknown [method_loc; method_name; parent]);
+        get_m_static a_method :: ident_list @ (dispatch_type_check ic class_info a_method.f_parameters program_line 0 (input_line ic |> int_of_string));
     | "eq" | "lt" | "le" -> 
         let left_type = read_expression ic class_info in let right_type = read_expression ic class_info in
         if String.equal (List.hd left_type) (List.hd right_type) |> not then
-            raise (Failure "Equality expression failed, types are not equal\n");
+            raise (Equality_mismatch [program_line; List.hd left_type; List.hd right_type]);
         "Bool" :: left_type @ right_type;
     | "identifier" -> 
         let (* ident_loc *) _ = input_line ic in let identifier = input_line ic in 
-        let object_id = Hashtbl.find_opt class_info.attribute_env identifier in
-        if  object_id = None then
-            raise (Failure "identifier not found in class_info attributes\n")
-        else [Option.get object_id |> get_static];
+        if String.equal identifier "self" |> not then
+            let object_id = Hashtbl.find_opt class_info.attribute_env identifier in
+            if  object_id = None then
+                raise (Identifier_unbound [program_line; identifier])
+            else [Option.get object_id |> get_static];
+        else ["SELF_TYPE"];
     | "if" -> 
         let cond_type = read_expression ic class_info in 
-        if String.equal (List.hd cond_type) "Bool" then 
-            raise (Failure "Nonconforming expression for while loop\n");
         let then_type = read_expression ic class_info in 
         let else_type = read_expression ic class_info in 
         lub (List.hd then_type) (List.hd else_type) :: (cond_type @ then_type @ else_type); 
     | "integer" -> let (* integer *) _ =  input_line ic in ["Int"];
     | "isvoid"  -> "Bool" :: read_expression ic class_info;
-    | "let" -> 
-        let type_list = ref [] in 
-        let arguments = ref [] in 
-        for i = 1 to input_line ic |> int_of_string (* # of bindings *) do 
-            let binding   = input_line ic in 
-            let (* ident_loc *) _ = input_line ic in let identifier = input_line ic in
-            let (* type_loc  *) _ = input_line ic in let bind_type  = input_line ic in
-            if Hashtbl.mem classes bind_type |> not then
-                raise (Failure "Unknown class in let expression\n");
-            Hashtbl.add class_info.attribute_env identifier (new_object_id bind_type);
-            arguments := identifier :: !arguments;
-            if String.equal binding "let_binding_init" then
-                let init_type = read_expression ic class_info in
-                if conforms_to (List.hd init_type) bind_type |> not then
-                    raise (Failure "Initialization does not conform to static type")
-                else type_list := !type_list @ init_type;
-        done; 
-        let type_list = !type_list @ (read_expression ic class_info) in
-        List.iter (Hashtbl.remove class_info.attribute_env) !arguments;
-        type_list;
-    | "negate" -> "Int" :: read_expression ic class_info;
+    | "let" ->  
+        let type_list = let_binding_type_check ic class_info program_line  (input_line ic |> int_of_string (* # of bindings *)) in
+        let let_type = read_expression ic class_info in
+        List.fold_left (fun acc ele -> Hashtbl.remove class_info.attribute_env (fst ele); acc @ (snd ele)) [] type_list @ let_type;
+    | "negate" -> 
+        let negate_list = read_expression ic class_info in
+        if String.equal (List.hd negate_list) "Bool" |> not then
+            raise (Negate_type [program_line; List.hd negate_list]);
+        "Int" :: negate_list;
     | "new" -> 
-        let (* class loc. *) _ = input_line ic in let new_class = input_line ic in 
+        let class_loc = input_line ic in let new_class = input_line ic in 
         if Hashtbl.mem classes new_class |> not then 
-            raise (Failure "Unknown class in new expression\n");
+            raise (Unknown_type [class_loc; new_class]);
         [new_class];         
     | "not" -> 
-        let type_list = read_expression ic class_info in
-        if String.equal (List.hd type_list) "Bool" |> not then 
-            raise (Failure "Expression Not doesn't have type Bool\n");
-        "Bool" :: type_list;
+        let not_list = read_expression ic class_info in
+        if String.equal (List.hd not_list) "Bool" |> not then 
+            raise (Not_type [program_line; List.hd not_list]);
+        "Bool" :: not_list;
     | "plus" | "minus" | "times" | "divide" -> 
         let left_type = read_expression ic class_info in let right_type = read_expression ic class_info in 
         if String.equal (List.hd left_type) "Int" && String.equal (List.hd right_type) "Int" then 
             "Int" :: (left_type @ right_type)
-        else raise (Failure "Nonconforming plus/minus/times/divide\n");
+        else raise (Arithmetic_type [program_line; List.hd left_type; List.hd right_type]);
     | "string" -> let (* string *) _ = input_line ic in ["String"];
     | "true" | "false" -> ["Bool"];
     | "while"  -> 
         let cond_type = read_expression ic class_info in 
-        if String.equal (List.hd cond_type) "Bool" |> not then
-            raise (Failure "Nonconforming condition expr for while loop\n");
         let body_type = read_expression ic class_info in "Object" :: cond_type @ body_type;
-    | str -> raise (Failure "read_expression failed\n");;
+    | str -> raise (Failure "read_expression failed\n") 
+and case_type_check ic class_info case_type length = 
+    match length with
+    | 0 -> []
+    | _ ->
+        let ident_loc = input_line ic in let identifier = input_line ic in
+        if String.equal identifier "self" then
+            raise (Case_self ident_loc);
+        let (* type loc *)   _ = input_line ic in let ident_type = input_line ic in
+        if Hashtbl.mem classes ident_type |> not then
+            raise (Unknown_type [ident_loc; ident_type]);
+        let case_body = read_expression ic class_info in 
+        if String.equal !case_type "" then
+            case_type := List.hd case_body
+        else
+            case_type := lub !case_type (List.hd case_body);
+        case_body @ case_type_check ic class_info case_type (length - 1)
+and dispatch_type_check ic class_info formal_types program_line step length = 
+    if step != length then
+        let arg_type = read_expression ic class_info in
+        if conforms_to (List.hd formal_types |> get_static) (List.hd arg_type) |> not then
+            raise (Dispatch_parameter_nonconform [program_line; step + 1 |> string_of_int; List.hd formal_types |> get_static])
+        else arg_type @ dispatch_type_check ic class_info (List.tl formal_types) program_line (step + 1) length;
+    else [];
+and let_binding_type_check ic class_info program_line length = 
+    if length = 0 then []
+    else 
+        let binding = input_line ic in 
+        let ident_loc  = input_line ic in let identifier = input_line ic in
+        let (* type_loc  *) _ = input_line ic in let bind_type  = input_line ic in
+        if String.equal identifier "self" then
+            raise (Let_self ident_loc);
+        if String.equal identifier "SELF_TYPE" |> not && Hashtbl.mem classes bind_type |> not then
+            raise (Unknown_type [program_line; bind_type]);
+        Hashtbl.add class_info.attribute_env identifier (new_object_id bind_type);
+        if String.equal binding "let_binding_init" then
+            let init_type = read_expression ic class_info in
+            if conforms_to (List.hd init_type) bind_type |> not then
+                raise (Let_nonconform [program_line; List.hd init_type; bind_type])
+            else (identifier, init_type) :: let_binding_type_check ic class_info program_line (length - 1);
+        else (identifier, []) :: let_binding_type_check ic class_info program_line (length - 1);;
 
-let rec initialize_features ic class_info feature_length =
+let rec initialize_formals ic class_info formal_types length = 
+    match length with 
+    | 0 -> []
+    | _ ->
+        let (* identifier_location *) _ = input_line ic in let identifier  = input_line ic in
+        let formal_type = List.hd formal_types |> get_static in 
+        Hashtbl.add class_info.attribute_env identifier (new_object_id formal_type);
+        identifier :: initialize_formals ic class_info formal_types (length - 1);;
+
+let rec type_check_features ic class_info feature_length =
     if feature_length != 0 then
         let feature    = input_line ic in
-        let identifier = input_line ic in let (* i_location *) _ = input_line ic in
+        let identifier = input_line ic in let ident_loc = input_line ic in
         let () = match feature with
         | "attribute_no_init" -> expressions_skip ic;
         | "attribute_init"    ->
             let attribute = Hashtbl.find class_info.attribute_env identifier in
             let type_list = read_expression ic class_info in
             if conforms_to (get_static attribute) (List.hd type_list) then
-                raise (Failure "(*Here lies nonconforming attribute error*)");
+                raise (Attribute_nonconform [ident_loc; List.hd type_list; get_static attribute]);
             Hashtbl.replace class_info.attribute_env identifier {a_type = (get_static attribute, List.hd type_list); t_list = type_list};
-        | "method" -> ()
-        | _ -> raise (Failure "initialize_features failed")
-    in initialize_features ic class_info feature_length;;
+        | "method" ->
+            let a_method = Hashtbl.find class_info.method_env identifier in
+            let formal_list = initialize_formals ic class_info a_method.f_parameters (input_line ic |> int_of_string) in 
+            let type_list = read_expression ic class_info in
+            if conforms_to (get_m_static a_method) (List.hd type_list) |> not then
+                raise (Method_nonconform [ident_loc; List.hd type_list; get_m_static a_method; identifier]);
+            List.iter (fun e -> Hashtbl.remove class_info.attribute_env e) formal_list;
+            Hashtbl.replace class_info.method_env identifier {a_method with info = {a_type = (get_m_static a_method, List.hd type_list); t_list = type_list}}
+        | _ -> raise (Failure "initialize_features failed\n");
+        in type_check_features ic class_info feature_length;;
 
 let rec compare_formals_body ident_and_loc prev_formals new_formals =
     match ident_and_loc with
@@ -501,7 +496,7 @@ let rec read_features ic class_name class_info length =
 let add_expressions ic class_name class_info =
     seek_in ic (List.nth class_info.ic_pointers 1);
     let feature_length = input_line ic |> int_of_string in
-    try initialize_features ic class_info feature_length with | _ -> ();;
+    try type_check_features ic class_info feature_length with | _ -> ();;
 
 let rec add_features ic path =
     match path with
@@ -525,8 +520,8 @@ let rec add_classes ic length =
         if class_name = "SELF_TYPE" then
             raise (Class_self_type program_line);
         if Hashtbl.mem classes class_name then
-            raise (Class_redefine (program_line, class_name))
-        else let inheritable = (input_line ic = "inherits") in
+            raise (Class_redefine (program_line, class_name)); 
+        let inheritable = (String.equal (input_line ic) "inherits") in
         let class_inheritance = if inheritable then (input_line ic, input_line ic) else ("Object", "") in
         if inheritable && List.mem (fst class_inheritance) ["Bool"; "Int"; "String"] then 
             raise (Class_inherits [snd class_inheritance; class_name; fst class_inheritance]);
@@ -541,41 +536,245 @@ let rec add_classes ic length =
         } in Hashtbl.add classes class_name class_info;
         add_classes ic (length - 1);;
 
-(* ---------------------------------------------------------------------------------------------------------------------------------------------------------- *)
+(* Print to .cl-ast Functions - There are four main components: class_map, implementation_map, parent_map, and the annotated AST tree ``````----------------------------------------------- *)
 
-let rec print_map ic oc path = 
+let rec print_expressions ic oc type_list =
+    fprintf oc "%s\n" (input_line ic);                                          (* Program line of expression *)
+    let keyword = input_line ic in
+    fprintf oc "%s\n%s\n" (List.hd type_list) keyword;
+    let type_list = List.tl type_list in
+    match keyword with
+    | "assign" -> 
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic);                  (* Program line & Ident *) 
+        print_expressions ic oc type_list;
+    | "block" -> 
+        let block_length = input_line ic |> int_of_string in
+        fprintf oc "%i\n" block_length;
+        print_block ic oc type_list block_length;
+    | "case"  ->
+        let type_list = print_expressions ic oc type_list in
+        let case_length = input_line ic |> int_of_string in
+        fprintf oc "%i\n" case_length;
+        print_case ic oc type_list case_length;
+    | "dynamic_dispatch" ->
+        let type_list = print_expressions ic oc type_list in 
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic);                  (* Location and Method *)  
+        print_dispatch ic oc type_list (input_line ic |> int_of_string);
+    | "self_dispatch" ->  
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic);                  (* Location and Method *)
+        print_dispatch ic oc type_list (input_line ic |> int_of_string)
+    | "static_dispatch" -> 
+        let type_list = print_expressions ic oc type_list in 
+        fprintf oc "%s\n%s\n%s\n%s\n" (input_line ic) (input_line ic) (input_line ic) (input_line ic);   (* Location and Parent *)
+        print_dispatch ic oc type_list (input_line ic |> int_of_string);
+    | "eq" | "lt" | "le" | "plus" | "minus" | "times" | "divide" | "while" -> 
+        print_expressions ic oc type_list |>  print_expressions ic oc;
+    | "identifier" -> 
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic);                                  (* Location and identifier *) 
+        type_list;
+    | "if" -> 
+        print_expressions ic oc type_list |> print_expressions ic oc |> print_expressions ic oc (* if expr -> then expr -> else expr *)
+    | "integer" | "string" -> 
+        fprintf oc "%s\n" (input_line ic);
+        type_list;
+    | "isvoid" | "negate" | "not" -> 
+        print_expressions ic oc type_list;
+    | "let" ->  
+        print_let_binding ic oc type_list (input_line ic |> int_of_string (* # of bindings *)) |> print_expressions ic oc;
+    | "new" -> 
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic);
+        type_list;
+    | "true" | "false" -> type_list;
+    | str -> raise (Failure "print_expression failed\n");
+and print_block ic oc type_list length =
+    match length with 
+    | 0 -> type_list
+    | _ -> 
+        let type_list = print_expressions ic oc type_list in
+        print_block ic oc type_list (length - 1)
+and print_case ic oc type_list length = 
+    match length with
+    | 0 -> type_list
+    | _ ->
+        fprintf oc "%s\n%s\n%s\n%s\n" (input_line ic) (input_line ic) (input_line ic) (input_line ic);  (* Program lines, Ident, and type *)
+        let type_list = print_expressions ic oc type_list in                                            (* Case Body *)
+        print_case ic oc type_list (length - 1);
+and print_dispatch ic oc type_list length = 
+    match length with
+    | 0 -> type_list;
+    | _ -> 
+        let type_list = print_expressions ic oc type_list in                                            (* argument type list *)
+        print_dispatch ic oc type_list (length - 1)
+and print_let_binding ic oc type_list length = 
+    if length = 0 then []
+    else 
+        let binding = input_line ic in 
+        fprintf oc "%s\n%s\n%s\n%s\n%s\n" binding (input_line ic) (input_line ic) (input_line ic) (input_line ic);  (* Locations, Identifier, and type *)
+        if String.equal binding "let_binding_init" then
+            print_let_binding ic oc (print_expressions ic oc type_list) (length - 1)
+        else print_let_binding ic oc type_list (length - 1);;
+
+let rec print_argument ic oc type_list length = 
+    match length with 
+    | 0 -> ()
+    | _ ->
+        fprintf oc "%s\n%s" (input_line ic) (input_line ic); (* location and identifier  *)
+        print_argument ic oc (print_expressions ic oc type_list) (length - 1);;
+
+let rec print_features ic oc class_info = 
+    fprintf oc "%s\n" (input_line ic); (* Program line of feature definition *)
+    let feature = input_line ic in
+    fprintf oc "%s\n%s\n" feature (input_line ic); (* Program line of identifier *)
+    let identifier = input_line ic in 
+    fprintf oc "%s\n" identifier;
+    match feature with
+    | "attribute_init" | "attribute_no_init" -> 
+        fprintf oc "%s\n%s\n" (input_line ic) (input_line ic); (* Program line of type and the type of attribute *)
+        if String.equal feature "attribute_init" then
+            let _ = print_expressions ic oc (Hashtbl.find class_info.attribute_env identifier).t_list in ();
+    | "method" -> 
+        print_argument ic oc (Hashtbl.find class_info.method_env identifier).info.t_list (input_line ic |> int_of_string); 
+    | _ -> raise (Failure "Print_features read something that wasn't a feature\n");;
+
+let rec print_annotated_ast ic oc length = 
+    match length with
+    | 0 -> ()
+    | _ -> 
+        fprintf oc "%s\n" (input_line ic); (* Program line of class definition *)
+        let a_class = input_line ic in 
+        fprintf oc "%s\n" a_class;
+        let inheritable = input_line ic in 
+        fprintf oc "%s\n" inheritable;
+        if String.equal inheritable "inherits" then 
+            fprintf oc "%s\n%s\n" (input_line ic) (input_line ic); 
+        fprintf oc "%s\n" (input_line ic);
+        print_features ic oc (Hashtbl.find classes a_class);;
+
+let rec print_parent oc path = 
     match path with
-    | [] -> close_out oc;
+    | [] -> ();
+    | head::tail -> 
+        if String.equal head "Object" |> not then 
+            let parent = (Hashtbl.find classes head).parent in
+            fprintf oc "%s\n%s\n" parent head;
+        print_parent oc tail;;
+
+let rec print_methods ic oc method_list class_list = 
+    match method_list with
+    | [] -> ()
+    | head::tail -> 
+        let class_name  = List.hd class_list in
+        let class_info  = Hashtbl.find classes (class_name) in
+        let a_method = Hashtbl.find_opt class_info.method_env head in
+        if a_method = None then
+            print_methods ic oc method_list (List.tl class_list)
+        else
+            let a_method = Option.get a_method in
+            let () = fprintf oc "%s\n" head in 
+            let () = if List.mem class_name ["Bool"; "IO"; "Int"; "Object"; "String"] then
+                fprintf oc "%i\n%s\n%i\n%s\ninternal\n%s.%s\n" 0 class_name 0 (get_m_static a_method) class_name head
+            else
+                let _ = input_line ic, input_line ic in
+                while not (String.equal (input_line ic)  head) do
+                    expressions_skip ic;
+                    let _ = input_line ic, input_line ic in ();
+                done;
+                let () = fprintf oc "%i\n" (List.length a_method.f_parameters) in
+                for i = 1 to List.length a_method.f_parameters do 
+                    let _ = input_line ic in                            (* Formal location *)
+                    fprintf oc "%s\n" (input_line ic);
+                    let _ = input_line ic, input_line ic in ();         (* Formal type and location *)
+                done;
+                let _ = input_line ic, input_line ic in                 (* Method return type and location *)
+                fprintf oc "%s\n" class_name;
+                let _  = print_expressions ic oc a_method.info.t_list in ();
+            in print_methods ic oc tail class_list;;
+
+let rec print_implementation ic oc path =
+    match path with
+    | [] -> ()
+    | head::tail -> 
+        fprintf oc "%s\n" head;
+        let class_info = Hashtbl.find classes head in
+        let method_list = method_list class_info [] in
+        fprintf oc "%i\n" (List.length method_list);
+        seek_in ic (List.nth class_info.ic_pointers 1);
+        expressions_skip ic;
+        print_methods ic oc method_list (get_ancestor_tree head |> List.rev)
+
+let rec print_class_attributes ic oc attribute_env length =
+    match length with
+    | 0 -> ();
+    | _ -> 
+        let inherits  = input_line ic in 
+        let (* ident. loc.*) _ = input_line ic in
+        let identifier         = input_line ic in
+        let (* type loc.  *) _ = input_line ic in
+        let attribute_type     = input_line ic in
+        if String.equal inherits "attribute_init" then 
+            fprintf oc "initializer\n"
+        else fprintf oc "no_initializer\n";
+        fprintf oc "%s\n%s\n" identifier attribute_type;
+        if String.equal inherits "attribute_init" then
+            let _ = print_expressions ic oc (Hashtbl.find attribute_env identifier).t_list in ();
+        print_class_attributes ic oc attribute_env (length - 1);;
+
+let rec print_all_attributes ic oc class_name class_info =
+    match class_name with
+    | "Bool" | "Int" | "IO" | "Object" | "String" -> ();
+    | _ ->
+        print_all_attributes ic oc class_info.parent (Hashtbl.find classes class_info.parent);
+        seek_in ic (List.nth class_info.ic_pointers 1);
+        let (* feature length *) _ = input_line ic in
+        print_class_attributes ic oc class_info.attribute_env (Hashtbl.length class_info.attribute_env);;
+
+
+let rec print_class ic oc path = 
+    match path with
+    | [] -> ()
     | head::tail -> 
         fprintf oc "%s\n" head;
         let class_info = Hashtbl.find classes head in
         fprintf oc "%i\n" (attribute_length head class_info 0);
         if List.compare_length_with class_info.ic_pointers 0 = 0 |> not then 
             print_all_attributes ic oc head class_info;
-        print_map ic oc tail;;
+        print_class ic oc tail;;
+
+let rec print_type_file ic oc path = 
+    let class_length = Hashtbl.length classes in 
+    let parent_path = path in
+    let sorted_path = List.fast_sort String.compare path in 
+    fprintf oc "class_map\n%i\n" class_length;
+    print_class ic oc sorted_path;
+    fprintf oc "implementation_map\n%i\n" class_length;
+    print_implementation ic oc sorted_path;
+    fprintf oc "parent_map\n%i\n" (class_length - 1);
+    print_parent oc parent_path;
+    seek_in ic 0;
+    fprintf oc "%s\n" (input_line ic);
+    print_annotated_ast ic oc class_length;
+    close_in ic;
+    close_out oc;;
 
 (* 'Main' Method of the program. Calls all functions and returns either an error or a .cl-ast file ---------------------------------------------------------- *)
 let main ic =
     match input_line ic with                                                                         (* Handles the empty file case                 *)
     | "0"    -> raise No_class_main;                                                                 (* If no class exists, cry no class Main       *)
-    | length ->                                                                          
+    | length ->                                                                        
         add_classes ic (length |> int_of_string);                                                    (* Add program classes to hash table classes   *)
         if Hashtbl.mem classes "Main" |> not then
             raise (No_class_main);
         Hashtbl.iter (has_unknown_parent ic) classes;                                                (* Check all parents for any unknown classes   *)
-        let path = List.tl (Hashtbl.fold create_path classes [] |> topo_sort) in                     (* Create a path for feature type checking     *)
+        let path = topo_sort classes in                                                              (* Create a path for feature type checking     *)
         add_features ic path;                                                                        
         Hashtbl.iter (add_expressions ic) classes;
-        let oc = String.concat "type" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out in
-            fprintf oc "class_map\n%i\n" (Hashtbl.length classes);
-            List.fast_sort String.compare path |> print_map ic oc;
-            close_in ic;
-            close_out oc;;
+        print_type_file ic (String.concat "type" [(String.sub Sys.argv.(1) 0 (String.length Sys.argv.(1) - 3)); ""] |> open_out) path;;
 
 (* Error handler - Calls main method and handles all errors encountered ------------------------------------------------------------------------------------- *)
 
 let ic = open_in argv.(1) in (* Opens input file. will crash if file does not exist *)      
 try main ic with
+(* Class Exceptions *)
 | No_class_main  ->
     printf "ERROR: 0: Type-Check: class Main not found\n"; 
 | No_method_main ->
@@ -596,6 +795,8 @@ try main ic with
     printf "ERROR: 0: Type-Check: inheritance cycle: %s" err;
     print_cycle err (Hashtbl.find classes err).parent;                   
     printf "\n";
+
+(* Feature Exceptions *)
 | Attribute_redefine err->
     printf "ERROR: %s: Type-Check: class %s redefines attribute %s\n" 
         (List.hd err) (List.nth err 1) (List.nth err 2);
@@ -628,11 +829,54 @@ try main ic with
         (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3);
 | Method_unknown_return_type err ->
     printf "ERROR: %s: Type-Check: class %s has method %s with unknown return type %s\n"
-        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3);;
-(*
-    1st Pass: Read classes and type check them. We DONT read attributes nor methods because of lack of info from environment and parents.
-        Then we should order classes to know which class to safely type check attributes and methods (not expressions) FIRST.
-    2nd Pass: Read the attributes and methods of each class in order to build an environment for attributes and methods for EACH class. We can type check for
-        attribute or method redefinition.
-    3rd Pass: Now read attributes initializations and method bodies. We have all class info to type check this part.
-*)
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3)
+
+(* Expression Exceptions *)
+| Arithmetic_type err ->
+    printf "ERROR: %s: Type-Check: arithmetic on %s %s instead of Ints\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Assign_self err ->
+    printf "ERROR: %s: Type-Check: cannot asign to self\n" err
+| Assign_nonconform err ->
+    printf "ERROR: %s: Type-Check: %s does not conform to %s in assignment\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Attribute_nonconform err ->
+    printf "ERROR: %s: Type-Check: %s does not conform to %s in initialized attribute\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Case_self err         ->
+    printf "ERROR: %s: Type-Check: binding self in a case expression is not allowed\n" err
+| Dispatch_unknown err ->
+    printf "ERROR: %s: Type-Check: unknown method %s in dispatch on %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Dispatch_parameter_mismatch err ->
+    printf "ERROR: %i: Type-Check: wrong number of actual arguments (%i vs. %i)\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Dispatch_parameter_nonconform err ->
+    printf "ERROR: %s: Type-Check: argument %s type %s does not conform to formal type %s"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3)
+| Static_dispatch_nonconform err ->
+    printf "ERROR: %s: Type-Check: %s does not conform to %s in static dispatch\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Equality_mismatch err ->
+    printf "ERROR: %s: Type-Check: comparison between %s and %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Identifier_unbound err ->
+    printf "ERROR: %s: Type-Check: unbound identifier %s\n"
+        (List.hd err) (List.nth err 1)
+| Let_nonconform err ->
+    printf "ERROR %s: Type-Check: initializer type %s does not conform to type %s\n"
+        (List.hd err) (List.nth err 1) (List.nth err 2)
+| Let_self err ->
+    printf "ERROR: %s: Type-Check: binding self in a let is not allowed\n" err
+| Method_nonconform err ->
+    printf "ERROR: %s: Type-Check: %s does not confrom to %s in method %s"
+        (List.hd err) (List.nth err 1) (List.nth err 2) (List.nth err 3)
+| Negate_type err ->
+    printf "ERROR: %s: Type-Check: negate applied to type %s instead of Int\n"
+        (List.hd err) (List.nth err 1)
+| Not_type err ->
+    printf "ERROR: %s; Type-Check: not applied to type %s instead of Bool\n"
+        (List.hd err) (List.nth err 1)
+| Unknown_type err -> 
+    printf "ERROR: %s: Type-Check: unknown type %s\n"
+        (List.hd err) (List.nth err 1)
