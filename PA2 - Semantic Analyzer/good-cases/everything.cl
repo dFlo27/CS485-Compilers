@@ -1,20 +1,28 @@
+(* Madness *)
 
+(* Method inheritance check *)
 class Parent {
     test(x : Int, y : String) : Int {1 + 2 + 3};
 };
 class Child inherits Parent {
     test (x : Int, y : String) : Int {2 + 3 + 4};
+    method (no_inherits : Int) : Object {2 + 3};
 };
 
-class GrandChild inherits Child {};
+class GrandChild inherits Child {
+    x : Child <- new SELF_TYPE;
+    method(x : Int) : Object {method(1)};
+};
 
 class GGrandChild inherits GrandChild {};
 
+(* Checking each expression *)
 class Main inherits IO {
     e : SELF_TYPE;
     g : Child;
     h : Parent;    
-    x : Int <- {1;
+    x : Int <- {
+        1;
         ~1;
         "1";
         true;
@@ -33,7 +41,7 @@ class Main inherits IO {
         g <- new Child;
         h <- new GGrandChild;
         x <- new Int;
-        test(x, z);
+        a(x, z);
         h.test(x, z);
         g@Parent.test(x, z);
         h.test(x, z);
@@ -42,13 +50,13 @@ class Main inherits IO {
         else
             out_string("wrong!\n")
         fi;
-        while 1 = x loop
+        while false loop
             x <- x + 1
         pool;
-        let x : String <- "hi", g : Int <- 1, h : Int in x;
+        let x : String <- "hi", g : Object <- 1, h : Int in x;
         case x of 
-            y : Int => y;
-            z : String => z;
+            y : Object => y <- 1 + 1;
+            z : String => out_string(z);
         esac;
         copy();
         type_name();
@@ -77,7 +85,7 @@ class Main inherits IO {
         g <- new Child;
         h <- new GGrandChild;
         x <- new Int;
-        test(x, z);
+        a(x, z);
         h.test(x, z);
         g@Parent.test(x, z);
         h.test(x, z);
@@ -98,6 +106,17 @@ class Main inherits IO {
         type_name();
         abort();
     }};
-    test(x : Int, y : String) : Int {1 + 2 + 3};
-    fake(x : Int, y : String, z : IO, a : Bool, b : Object, c : Main, d : Parent) : Object {1};
+    a(x : Int, y : String) : Int {1 + 2 + 3};
+    b(x : Int, y : String, z : IO, a : Bool, b : Object, c : Main, d : Parent) : Object {1};
+};
+
+class A {
+    a : Int;
+    a(a : String) : Object {
+        case a of 
+            a : Int    => a + 1;
+            a : String => a <- "no";
+            a : Object => a <- new SELF_TYPE;
+        esac
+    };
 };

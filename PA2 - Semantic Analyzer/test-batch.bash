@@ -8,12 +8,12 @@ for i in $cases; do
     ../cool --parse $i
     parse=$i-ast
     my_result=`ocaml main.ml "$parse"`
+    cool_result=`../cool --class-map $i`
     if [[ $my_result == *"ERROR:"* ]]; then
         echo $my_result
     else
         rm $i"-type"
     fi
-    cool_result=`../cool --class-map $i`
     if [[ $cool_result == *"ERROR:"* ]]; then
         echo $cool_result
     fi
