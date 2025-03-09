@@ -1,8 +1,8 @@
-
-class Jim inherits Main {
-    main() : Object {1};
-};
-
 class Main inherits IO {
-    main() : Object {1};
+    x : SELF_TYPE;
+    main() : Object {
+        x <- self@Object.copy()
+    };
 };
+
+class A inherits Main {};

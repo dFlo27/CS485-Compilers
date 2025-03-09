@@ -1,15 +1,10 @@
 #!/bin/bash
 
-../cool --parse $1
-parse=`dirname $1`/`basename $1 .cl`.cl-ast
-my_result=`ocaml main.ml "$parse"`
-if [[ $my_result == *"ERROR:"* ]]; then
-    echo $my_result
-else
-    rm "`dirname $1`/`basename $1 .cl`.cl-type"
+../cool --parse $1 --out main
+my_result=`ocaml main.ml main.cl-ast`
+cool_result=`../cool --type $1 --out cool`
+echo $my_result
+echo $cool_result
+if [[ $my_result != *"ERROR:"* ]]; then
+    diff -s cool.cl-type main.cl-type
 fi
-cool_result=`../cool --class-map $1`
-if [[ $cool_result == *"ERROR:"* ]]; then
-    echo $cool_result
-fi
-rm "$parse"
