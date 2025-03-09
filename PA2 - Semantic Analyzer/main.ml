@@ -421,8 +421,7 @@ and skip_let_binding ic length =
         let _ = input_line ic, input_line ic, input_line ic, input_line ic in
         if String.equal binding "let_binding_init" then
             expressions_skip ic;
-        skip_let_binding ic (length - 1);;
-
+        skip_let_binding ic (length - 1);; 
 (* When skipping features is necessary. Calls expressions_skip according to the number of features in the class being read *)
 let rec features_skip ic length =
     match length with 
@@ -942,7 +941,7 @@ let rec print_features ic oc a_class length =
             fprintf oc "%s\n" (input_line ic);
             fprintf oc "%s\n" (input_line ic); (* Program line of type and the type of attribute *)
             if String.equal feature "attribute_init" then
-                let _ = print_expressions ic oc (Hashtbl.find a_class.attribute_env identifier).t_list in ();
+                ignore (print_expressions ic oc (Hashtbl.find a_class.attribute_env identifier).t_list);
         | "method" -> 
             let a_method = Hashtbl.find a_class.method_env identifier in
             fprintf oc "%s\n" (input_line ic);
@@ -952,7 +951,7 @@ let rec print_features ic oc a_class length =
             done;
             fprintf oc "%s\n" (input_line ic);
             fprintf oc "%s\n" (input_line ic);
-        let _ = print_expressions ic oc a_method.info.t_list in ();
+            ignore (print_expressions ic oc a_method.info.t_list);
         | _ -> raise (Failure "Print_features read something that wasn't a feature")
         in print_features ic oc a_class (length - 1);;
 
