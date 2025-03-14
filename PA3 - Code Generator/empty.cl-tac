@@ -1,0 +1,6 @@
+comment start
+label Counter_init_0
+count <- start
+t$1 <- count
+t$0 <- self
+return t$0
